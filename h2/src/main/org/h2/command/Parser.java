@@ -1498,7 +1498,7 @@ public class Parser {
         Update command = new Update(session);
         currentPrepared = command;
         Expression fetch = null;
-        if (database.getMode().topInDML && readIf("TOP")) {
+        if (database.getMode().getEnum() == ModeEnum.MSSQLServer && readIf("TOP")) {
             read(OPEN_PAREN);
             fetch = readTerm().optimize(session);
             read(CLOSE_PAREN);
@@ -1551,7 +1551,7 @@ public class Parser {
     private Delete parseDelete(int start) {
         Delete command = new Delete(session);
         Expression fetch = null;
-        if (database.getMode().topInDML && readIf("TOP")) {
+        if (readIf("TOP")) {
             fetch = readTerm().optimize(session);
         }
         currentPrepared = command;
@@ -1586,7 +1586,7 @@ public class Parser {
                 }
             }
             read("ONLY");
-        } else if (database.getMode().limit && readIf(LIMIT)) {
+        } else if (readIf(LIMIT)) {
             fetch = readTerm().optimize(session);
         }
         return fetch;
@@ -3015,7 +3015,7 @@ public class Parser {
                 }
             }
             // MySQL-style LIMIT / OFFSET
-            if (!hasOffsetOrFetch && database.getMode().limit && readIf(LIMIT)) {
+            if (!hasOffsetOrFetch && readIf(LIMIT)) {
                 Expression limit = readExpression().optimize(session);
                 if (readIf(OFFSET)) {
                     command.setOffset(readExpression().optimize(session));
@@ -3145,7 +3145,7 @@ public class Parser {
         Select temp = currentSelect;
         // make sure aggregate functions will not work in TOP and LIMIT
         currentSelect = null;
-        if (database.getMode().topInSelect && readIf("TOP")) {
+        if (readIf("TOP")) {
             // can't read more complex expressions here because
             // SELECT TOP 1 +? A FROM TEST could mean
             // SELECT TOP (1+?) A FROM TEST or
@@ -3158,6 +3158,9 @@ public class Parser {
                 read("TIES");
                 command.setWithTies(true);
             }
+        } else if (readIf(LIMIT)) {
+            command.setOffset(readTerm().optimize(session));
+            command.setFetch(readTerm().optimize(session));
         }
         currentSelect = temp;
         if (readIf(DISTINCT)) {
@@ -6936,17 +6939,27 @@ public class Parser {
 
     private Column parseColumnForTable(String columnName, boolean defaultNullable) {
         Column column;
-        Mode mode = database.getMode();
-        if (mode.identityDataType && readIf("IDENTITY")) {
+        boolean isIdentity = readIf("IDENTITY");
+        if (isIdentity || readIf("BIGSERIAL")) {
+            // Check if any of them are disallowed in the current Mode
+            if (isIdentity && database.getMode().
+                    disallowedTypes.contains("IDENTITY")) {
+                throw DbException.get(ErrorCode.UNKNOWN_DATA_TYPE_1,
+                        currentToken);
+            }
             column = new Column(columnName, TypeInfo.TYPE_BIGINT);
             parseCompatibilityIdentityOptions(column);
-            column.setPrimaryKey(true);
-        } else if (mode.serialDataTypes && readIf("BIGSERIAL")) {
-            column = new Column(columnName, TypeInfo.TYPE_BIGINT);
-            column.setIdentityOptions(new SequenceOptions(), false);
-        } else if (mode.serialDataTypes && readIf("SERIAL")) {
+            // PostgreSQL compatibility
+            if (!database.getMode().serialColumnIsNotPK) {
+                column.setPrimaryKey(true);
+            }
+        } else if (readIf("SERIAL")) {
             column = new Column(columnName, TypeInfo.TYPE_INTEGER);
-            column.setIdentityOptions(new SequenceOptions(), false);
+            parseCompatibilityIdentityOptions(column);
+            // PostgreSQL compatibility
+            if (!database.getMode().serialColumnIsNotPK) {
+                column.setPrimaryKey(true);
+            }
         } else {
             column = parseColumnWithType(columnName);
         }
@@ -6993,7 +7006,12 @@ public class Parser {
                 column.setOnUpdateExpression(session, readExpression());
             }
             nullConstraint = parseNotNullConstraint(nullConstraint);
-            if (parseCompatibilityIdentity(column, mode)) {
+            if (readIf("AUTO_INCREMENT") || readIf("BIGSERIAL") || readIf("SERIAL")) {
+                parseCompatibilityIdentityOptions(column);
+                nullConstraint = parseNotNullConstraint(nullConstraint);
+            } else if (readIf("IDENTITY")) {
+                parseCompatibilityIdentityOptions(column);
+                column.setPrimaryKey(true);
                 nullConstraint = parseNotNullConstraint(nullConstraint);
             }
         }
@@ -7036,7 +7054,7 @@ public class Parser {
         if (readIf("SELECTIVITY")) {
             column.setSelectivity(readNonNegativeInt());
         }
-        if (mode.getEnum() == ModeEnum.MySQL) {
+        if (database.getMode().getEnum() == ModeEnum.MySQL) {
             if (readIf("CHARACTER")) {
                 readIf(SET);
                 readMySQLCharset();
@@ -10383,7 +10401,6 @@ public class Parser {
         String comment = column.getComment();
         boolean hasPrimaryKey = false, hasNotNull = false;
         NullConstraintType nullType;
-        Mode mode = database.getMode();
         for (;;) {
             String constraintName;
             if (readIf(CONSTRAINT)) {
@@ -10406,6 +10423,18 @@ public class Parser {
                 pk.setTableName(tableName);
                 pk.setIndexColumns(new IndexColumn[] { new IndexColumn(column.getName()) });
                 command.addConstraintCommand(pk);
+                if (readIf("AUTO_INCREMENT")) {
+                    parseCompatibilityIdentityOptions(column);
+                }
+                if (database.getMode().identityInPrimaryKey) {
+                    if (readIf(NOT)) {
+                        read(NULL);
+                        column.setNullable(false);
+                    }
+                    if (readIf("IDENTITY")) {
+                        parseCompatibilityIdentityOptions(column);
+                    }
+                }
             } else if (readIf(UNIQUE)) {
                 AlterTableAddConstraint unique = new AlterTableAddConstraint(session, schema,
                         CommandInterface.ALTER_TABLE_ADD_CONSTRAINT_UNIQUE, false);
@@ -10440,25 +10469,11 @@ public class Parser {
                 parseReferences(ref, schema, tableName);
                 command.addConstraintCommand(ref);
             } else if (constraintName == null) {
-                if (column.getIdentityOptions() != null || !parseCompatibilityIdentity(column, mode)) {
-                    return;
-                }
+                return;
             } else {
                 throw getSyntaxError();
             }
         }
-    }
-
-    private boolean parseCompatibilityIdentity(Column column, Mode mode) {
-        if (mode.autoIncrementClause && readIf("AUTO_INCREMENT")) {
-            parseCompatibilityIdentityOptions(column);
-            return true;
-        }
-        if (mode.identityClause && readIf("IDENTITY")) {
-            parseCompatibilityIdentityOptions(column);
-            return true;
-        }
-        return false;
     }
 
     private void parseCreateTableMySQLTableOptions(CreateTable command) {
