@@ -180,14 +180,6 @@ public class Build extends BuildBase {
         copy("temp", files, "src/test");
 
         java("org.h2.build.doc.GenerateHelp", null);
-        javadoc("-sourcepath", "src/main", "org.h2.tools", "org.h2.jmx",
-                "-classpath",
-                "ext/lucene-core-" + LUCENE_VERSION + ".jar" +
-                File.pathSeparator + "ext/lucene-analyzers-common-" + LUCENE_VERSION + ".jar" +
-                File.pathSeparator + "ext/lucene-queryparser-" + LUCENE_VERSION + ".jar" +
-                File.pathSeparator + "ext/jts-core-" + JTS_VERSION + ".jar",
-                "-docletpath", "bin" + File.pathSeparator + "temp",
-                "-doclet", "org.h2.build.doclet.ResourceDoclet");
 
         files = files("src/main").
             exclude("*.MF").
