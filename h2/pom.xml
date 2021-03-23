@@ -2,7 +2,7 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.h2database</groupId>
+  <groupId>com.tradingview</groupId>
   <artifactId>h2</artifactId>
   <version>2.0.201-SNAPSHOT</version>
   <packaging>jar</packaging>
@@ -212,37 +212,6 @@
     </testResource>
     </testResources>
     <plugins>
-    <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-enforcer-plugin</artifactId>
-        <version>3.0.0-M3</version>
-        <executions>
-          <execution>
-            <id>enforce-files-exist</id>
-            <goals>
-              <goal>enforce</goal>
-            </goals>
-            <configuration>
-              <rules>
-                <requireFilesExist>
-                  <files>
-                   <file>src/main/org/h2/res/help.csv</file>
-                  </files>
-                  <message>
-<![CDATA[
---------------------------------------------------------------------------------
-!!!         Run "./build.cmd compile" or "./build.sh compile" first,         !!!
-!!!         as described in MAVED.md                                         !!!
---------------------------------------------------------------------------------
-]]>
-                  </message>
-                </requireFilesExist>
-              </rules>
-              <fail>true</fail>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -254,7 +223,7 @@
               <mainClass>org.h2.tools.Console</mainClass>
             </manifest>
             <manifestEntries>
-              <Automatic-Module-Name>com.h2database</Automatic-Module-Name>
+              <Automatic-Module-Name>com.tradingview</Automatic-Module-Name>
               <Multi-Release>true</Multi-Release>
               <Premain-Class>org.h2.util.Profiler</Premain-Class>
             </manifestEntries>
